@@ -1,5 +1,4 @@
 import 'dart:math';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -19,7 +18,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   late final GameController gc;
   bool _navigatingAway = false;
 
-  // Countdown
   int _countdown = 3;
   bool _showCountdown = true;
 
@@ -40,8 +38,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       if (!mounted) return;
       final size = MediaQuery.of(context).size;
       gc.setScreenSize(size.width, size.height);
-      gc.startGame();
-      _runCountdown();
+      gc.startGame();   // resets state + cancels old timers, sets idle
+      _runCountdown();  // countdown finishes → calls gc.beginPlaying()
     });
   }
 
@@ -52,13 +50,17 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _countdownAnim.forward(from: 0);
       await Future.delayed(const Duration(seconds: 1));
     }
-    if (mounted) setState(() => _showCountdown = false);
+    if (!mounted) return;
+    setState(() => _showCountdown = false);
+    gc.beginPlaying(); // start the game loop AFTER countdown finishes
   }
 
   @override
   void dispose() {
     _countdownAnim.dispose();
-    if (gc.gameState.value == GameState.playing) gc.pauseGame();
+    // Always stop the loop when this screen is disposed —
+    // covers play-again, menu navigation, and back gestures.
+    gc.pauseGame();
     super.dispose();
   }
 
@@ -81,48 +83,49 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
     return Scaffold(
       body: GestureDetector(
-        onHorizontalDragStart: (d) => gc.onDragStart(d.localPosition.dx),
-        onHorizontalDragUpdate: (d) => gc.onDragUpdate(d.localPosition.dx),
-        onHorizontalDragEnd: (_) => gc.onDragEnd(),
-        // Also support free pan for diagonal swipes
-        onPanStart: (d) => gc.onDragStart(d.localPosition.dx),
-        onPanUpdate: (d) => gc.onDragUpdate(d.localPosition.dx),
-        onPanEnd: (_) => gc.onDragEnd(),
+        // Both axes wired: X = move left/right, Y = stretch/squish
+        onPanStart:  (d) => gc.onDragStart(d.localPosition.dx, d.localPosition.dy),
+        onPanUpdate: (d) => gc.onDragUpdate(d.localPosition.dx, d.localPosition.dy),
+        onPanEnd:    (_) => gc.onDragEnd(),
         child: Container(
+          width: size.width,
+          height: size.height,
           color: const Color(0xFF1A1A2E),
           child: Stack(
             children: [
-              // ── 3D Game World ──────────────────────────────────────
-              Positioned.fill(
-                child: Obx(() {
-                  // Trigger rebuild on obstacle list or ball change
-                  final obstacles = gc.obstacles.toList();
-                  final ball      = gc.ball.value;
-                  final sx        = gc.squishX.value;
-                  final sy        = gc.squishY.value;
+              // 3D Game World
+              Obx(() {
+                final obstacles = gc.obstacles.toList();
+                final ball      = gc.ball.value;
+                final sx        = gc.squishX.value;
+                final sy        = gc.squishY.value;
 
-                  return CustomPaint(
+                return SizedBox(
+                  width: size.width,
+                  height: size.height,
+                  child: CustomPaint(
+                    size: size,
                     painter: _JellyRunnerPainter(
                       obstacles:  obstacles,
                       ballX:      ball.x,
-                      squishX:    sx,
-                      squishY:    sy,
+                      ballScaleX: ball.scaleX * sx,
+                      ballScaleY: ball.scaleY * sy,
                       screenSize: size,
                     ),
-                  );
-                }),
-              ),
+                  ),
+                );
+              }),
 
-              // ── HUD ────────────────────────────────────────────────
+              // HUD
               Positioned(
                 top: 0, left: 0, right: 0,
                 child: SafeArea(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // Score
                         Obx(() => Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -140,16 +143,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                                 ],
                               ),
                             ),
-                            Obx(() => Text(
+                            Text(
                               'Best: ${gc.scoreController.bestScore.value}',
                               style: GoogleFonts.poppins(
                                 fontSize: 11,
                                 color: Colors.white.withOpacity(0.5),
                               ),
-                            )),
+                            ),
                           ],
                         )),
-                        // Pause button
                         GestureDetector(
                           onTap: () {
                             gc.pauseGame();
@@ -173,21 +175,86 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 ),
               ),
 
-              // ── Drag hint ──────────────────────────────────────────
+              // Shape hint — shows what the nearest upcoming wall needs
               Obx(() {
-                if (gc.score.value > 20) return const SizedBox.shrink();
+                final obs = gc.obstacles
+                    .where((o) => !o.passed)
+                    .fold<ObstacleModel?>(null, (prev, o) {
+                  if (prev == null || o.z < prev.z) return o;
+                  return prev;
+                });
+                if (obs == null || gc.score.value < 5) {
+                  return const SizedBox.shrink();
+                }
+
+                String hint;
+                Color hintColor;
+                IconData hintIcon;
+
+                switch (obs.holeType) {
+                  case HoleType.tall:
+                    hint      = 'Stretch UP!';
+                    hintColor = const Color(0xFF6BFFD8);
+                    hintIcon  = Icons.height_rounded;
+                    break;
+                  case HoleType.wide:
+                    hint      = 'Squish FLAT!';
+                    hintColor = const Color(0xFFFFD86B);
+                    hintIcon  = Icons.swap_vert_rounded;
+                    break;
+                  default:
+                    hint      = 'Any shape';
+                    hintColor = Colors.white54;
+                    hintIcon  = Icons.circle_outlined;
+                }
+
                 return Positioned(
-                  bottom: 50, left: 0, right: 0,
+                  bottom: 80, left: 0, right: 0,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: hintColor.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(30),
+                        border: Border.all(
+                            color: hintColor.withOpacity(0.5), width: 1.5),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(hintIcon, color: hintColor, size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            hint,
+                            style: GoogleFonts.fredoka(
+                              fontSize: 18,
+                              color: hintColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+
+              // Early-game drag hint
+              Obx(() {
+                if (gc.score.value > 25) return const SizedBox.shrink();
+                return Positioned(
+                  bottom: 40, left: 0, right: 0,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.swipe_rounded,
-                          color: Colors.white38, size: 22),
+                      const Icon(Icons.open_with_rounded,
+                          color: Colors.white38, size: 18),
                       const SizedBox(width: 8),
                       Text(
-                        'Drag left / right to move',
+                        'Drag left/right to move  •  up/down to reshape',
                         style: GoogleFonts.poppins(
-                            fontSize: 13, color: Colors.white38),
+                            fontSize: 12, color: Colors.white38),
                       ),
                     ],
                   )
@@ -198,7 +265,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 );
               }),
 
-              // ── Countdown overlay ──────────────────────────────────
+              // Countdown overlay
               if (_showCountdown)
                 Positioned.fill(
                   child: Container(
@@ -242,7 +309,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   ),
                 ),
 
-              // ── Game-over listener ─────────────────────────────────
+              // Game-over listener
               Obx(() {
                 if (gc.gameState.value == GameState.gameOver) {
                   WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -274,337 +341,225 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 class _JellyRunnerPainter extends CustomPainter {
   final List<ObstacleModel> obstacles;
   final double ballX;
-  final double squishX;
-  final double squishY;
+  final double ballScaleX; // combined player scaleX × squish
+  final double ballScaleY; // combined player scaleY × squish
   final Size screenSize;
 
   _JellyRunnerPainter({
     required this.obstacles,
     required this.ballX,
-    required this.squishX,
-    required this.squishY,
+    required this.ballScaleX,
+    required this.ballScaleY,
     required this.screenSize,
   });
 
-  // ── Perspective projection ────────────────────────────────────────────────
-  // World: X = -1..1 (road width), Z = 0 (near/ball) .. 20 (far horizon)
-  // Y = 0 (ground) .. 1 (wall top)
-  //
-  // Camera sits slightly above and behind the ball.
-  // horizon is at screenH * 0.42, road vanishes there.
-
-  static const double _cameraHeight = 0.55; // world units above ground
-  static const double _fov          = 280.0; // focal length in screen pixels equivalent
-  static const double _roadZ        = 0.0;   // ball's Z (always 0)
+  static const double _cameraHeight = 0.55;
+  static const double _fov          = 280.0;
+  static const double _roadZ        = 0.0;
 
   Offset _project(double wx, double wy, double wz, Size size) {
-    // Translate so camera is slightly behind ball (at z = -1.5)
     final double relZ = wz + 1.5;
-    if (relZ <= 0) return Offset(-9999, -9999); // behind camera
-
+    if (relZ <= 0.001) return const Offset(-9999, -9999);
     final double scale = _fov / relZ;
-
-    // Horizon center
-    final double cx = size.width  / 2;
-    final double cy = size.height * 0.42;
-
-    final double sx = cx + wx * scale;
-    // Y: ground is at cy, higher world Y goes UP on screen
-    final double sy = cy + (_cameraHeight - wy) * scale;
-
-    return Offset(sx, sy);
+    return Offset(
+      size.width  / 2 + wx * scale,
+      size.height * 0.42 + (_cameraHeight - wy) * scale,
+    );
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Sky gradient
-    final skyPaint = Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xFF87CEEB), Color(0xFFB8E4F9)],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height * 0.42));
+    final s = (size.width > 0 && size.height > 0) ? size : screenSize;
+
+    // Sky
+    final skyRect = Rect.fromLTWH(0, 0, s.width, s.height * 0.42);
     canvas.drawRect(
-        Rect.fromLTWH(0, 0, size.width, size.height * 0.42), skyPaint);
+      skyRect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF1A0A2E), Color(0xFF3B1F6B)],
+        ).createShader(skyRect),
+    );
 
-    // Ground below horizon
-    final groundPaint = Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xFF2C2C3E), Color(0xFF1A1A2E)],
-      ).createShader(
-          Rect.fromLTWH(0, size.height * 0.42, size.width, size.height * 0.58));
+    // Stars
+    final starPaint = Paint()..color = Colors.white.withOpacity(0.5);
+    for (final p in [
+      Offset(s.width * 0.10, s.height * 0.05),
+      Offset(s.width * 0.25, s.height * 0.12),
+      Offset(s.width * 0.50, s.height * 0.07),
+      Offset(s.width * 0.70, s.height * 0.03),
+      Offset(s.width * 0.85, s.height * 0.15),
+      Offset(s.width * 0.40, s.height * 0.18),
+      Offset(s.width * 0.60, s.height * 0.22),
+    ]) {
+      if (p.dy < s.height * 0.42) canvas.drawCircle(p, 1.5, starPaint);
+    }
+
+    // Ground
+    final groundRect = Rect.fromLTWH(0, s.height * 0.42, s.width, s.height * 0.58);
     canvas.drawRect(
-        Rect.fromLTWH(0, size.height * 0.42, size.width, size.height * 0.58),
-        groundPaint);
+      groundRect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF2C2C3E), Color(0xFF1A1A2E)],
+        ).createShader(groundRect),
+    );
 
-    // ── Road ────────────────────────────────────────────────────────────────
-    _drawRoad(canvas, size);
+    _drawRoad(canvas, s);
+    _drawRoadMarkings(canvas, s);
 
-    // ── Road markings ───────────────────────────────────────────────────────
-    _drawRoadMarkings(canvas, size);
-
-    // ── Obstacles (back to front) ────────────────────────────────────────────
     final sorted = List<ObstacleModel>.from(obstacles)
       ..sort((a, b) => b.z.compareTo(a.z));
-    for (final obs in sorted) {
-      _drawWall(canvas, size, obs);
-    }
+    for (final obs in sorted) _drawWall(canvas, s, obs);
 
-    // ── Ball shadow ──────────────────────────────────────────────────────────
-    _drawBallShadow(canvas, size);
-
-    // ── Ball ────────────────────────────────────────────────────────────────
-    _drawBall(canvas, size);
+    _drawBallShadow(canvas, s);
+    _drawBall(canvas, s);
   }
 
-  void _drawRoad(Canvas canvas, Size size) {
-    // Road: world X = -1..+1, Z = 0..20, Y = 0 (ground level)
-    final List<double> zLevels = [0.0, 2.0, 5.0, 10.0, 18.0];
+  void _drawRoad(Canvas canvas, Size s) {
+    const zLevels = [0.0, 2.0, 5.0, 10.0, 18.0];
     for (int i = 0; i < zLevels.length - 1; i++) {
-      final double z0 = zLevels[i];
-      final double z1 = zLevels[i + 1];
-
-      final tl = _project(-1.0, 0.0, z1, size);
-      final tr = _project( 1.0, 0.0, z1, size);
-      final bl = _project(-1.0, 0.0, z0, size);
-      final br = _project( 1.0, 0.0, z0, size);
-
-      // Alternate dark/slightly lighter strips for depth feel
-      final double t = i / (zLevels.length - 1);
-      final Color c = Color.lerp(
-        const Color(0xFF3A3A5C),
-        const Color(0xFF2A2A42),
-        t,
-      )!;
-
-      final path = Path()
-        ..moveTo(tl.dx, tl.dy)
-        ..lineTo(tr.dx, tr.dy)
-        ..lineTo(br.dx, br.dy)
-        ..lineTo(bl.dx, bl.dy)
-        ..close();
-
-      canvas.drawPath(path, Paint()..color = c);
+      final tl = _project(-1.0, 0.0, zLevels[i + 1], s);
+      final tr = _project( 1.0, 0.0, zLevels[i + 1], s);
+      final bl = _project(-1.0, 0.0, zLevels[i],     s);
+      final br = _project( 1.0, 0.0, zLevels[i],     s);
+      canvas.drawPath(
+        Path()
+          ..moveTo(tl.dx, tl.dy) ..lineTo(tr.dx, tr.dy)
+          ..lineTo(br.dx, br.dy) ..lineTo(bl.dx, bl.dy) ..close(),
+        Paint()
+          ..color = Color.lerp(const Color(0xFF3A3A5C),
+              const Color(0xFF2A2A42), i / (zLevels.length - 1))!,
+      );
     }
-
-    // Road edges (bright lines)
-    _drawRoadEdge(canvas, size, -1.0);
-    _drawRoadEdge(canvas, size,  1.0);
+    for (final wx in [-1.0, 1.0]) {
+      canvas.drawLine(
+        _project(wx, 0.0, 0.5, s), _project(wx, 0.0, 18.0, s),
+        Paint()
+          ..color = const Color(0xFFFF6B9D).withOpacity(0.4)
+          ..strokeWidth = 2.5
+          ..style = PaintingStyle.stroke,
+      );
+    }
   }
 
-  void _drawRoadEdge(Canvas canvas, Size size, double worldX) {
-    final near = _project(worldX, 0.0,  0.5, size);
-    final far  = _project(worldX, 0.0, 18.0, size);
-    canvas.drawLine(
-      near, far,
-      Paint()
-        ..color = Colors.white.withOpacity(0.25)
-        ..strokeWidth = 2.0
-        ..style = PaintingStyle.stroke,
-    );
-  }
-
-  void _drawRoadMarkings(Canvas canvas, Size size) {
-    // Dashed center line
+  void _drawRoadMarkings(Canvas canvas, Size s) {
     final paint = Paint()
       ..color = Colors.white.withOpacity(0.15)
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
-
     for (double z = 1.0; z < 18.0; z += 2.5) {
-      final a = _project(0.0, 0.0, z,       size);
-      final b = _project(0.0, 0.0, z + 1.0, size);
-      if (a.dy < size.height * 0.42) break;
+      final a = _project(0.0, 0.0, z,       s);
+      final b = _project(0.0, 0.0, z + 1.0, s);
+      if (a.dy < s.height * 0.42) break;
       canvas.drawLine(a, b, paint);
     }
   }
 
-  void _drawWall(Canvas canvas, Size size, ObstacleModel obs) {
+  void _drawWall(Canvas canvas, Size s, ObstacleModel obs) {
     if (obs.z < 0.2) return;
+    const wallH = GameController.wallHeight;
 
-    const double wallH = GameController.wallHeight;
+    // Hole border colour encodes the required ball shape
+    final Color holeGlow;
+    switch (obs.holeType) {
+      case HoleType.tall:
+        holeGlow = const Color(0xFF6BFFD8); // teal = drag up to stretch
+        break;
+      case HoleType.wide:
+        holeGlow = const Color(0xFFFFD86B); // gold = drag down to squish
+        break;
+      default:
+        holeGlow = const Color(0xFFFFE57A); // yellow = any shape ok
+    }
 
-    // The full wall rect (before hole)
-    final tl = _project(obs.holeLeft  - 10, wallH, obs.z, size); // full left far
-    // We'll draw the wall as 4 regions around the hole:
-    // Left slab, right slab, top slab, (bottom slab if floating hole)
+    const wallColor      = Color(0xFFE8622A);
+    const wallColorDark  = Color(0xFFC04A18);
+    const wallColorLight = Color(0xFFFF7A3C);
 
-    final wallColor      = const Color(0xFFE8622A); // orange brick
-    final wallColorDark  = const Color(0xFFC04A18); // darker face
-    final wallColorLight = const Color(0xFFFF7A3C); // highlight top
-
-    void drawQuad(Offset a, Offset b, Offset c, Offset d, Color color) {
-      if (a.dy < -100 || b.dy < -100) return; // off screen
+    void quad(Offset a, Offset b, Offset c, Offset d, Color color) {
+      if (a.dx < -5000 || b.dx < -5000) return;
       final path = Path()
-        ..moveTo(a.dx, a.dy)
-        ..lineTo(b.dx, b.dy)
-        ..lineTo(c.dx, c.dy)
-        ..lineTo(d.dx, d.dy)
-        ..close();
+        ..moveTo(a.dx, a.dy) ..lineTo(b.dx, b.dy)
+        ..lineTo(c.dx, c.dy) ..lineTo(d.dx, d.dy) ..close();
       canvas.drawPath(path, Paint()..color = color);
-      // Outline
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = Colors.black.withOpacity(0.3)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0,
-      );
+      canvas.drawPath(path, Paint()
+        ..color = Colors.black.withOpacity(0.3)
+        ..style = PaintingStyle.stroke ..strokeWidth = 1.0);
     }
 
-    // Helper: project a wall point (world x, world y, at obs.z)
-    Offset p(double wx, double wy) => _project(wx, wy, obs.z, size);
-    // Front face depth offset for thickness
-    Offset pf(double wx, double wy) => _project(wx, wy, obs.z + 0.12, size);
+    Offset p(double wx, double wy) => _project(wx, wy, obs.z, s);
+    Offset pf(double wx, double wy) => _project(wx, wy, obs.z + 0.12, s);
 
-    const double wallLeft  = -GameController.roadHalfWidth;
-    const double wallRight =  GameController.roadHalfWidth;
+    const wl = -GameController.roadHalfWidth;
+    const wr =  GameController.roadHalfWidth;
 
-    // ── LEFT slab (wall left edge to hole left edge) ──────────────────────
-    if (obs.holeLeft > wallLeft) {
-      // Front face
-      drawQuad(
-        p(wallLeft,      wallH),
-        p(obs.holeLeft,  wallH),
-        p(obs.holeLeft,  obs.holeTop),
-        p(wallLeft,      obs.holeTop),
-        wallColor,
-      );
-      // Bottom part of left slab (below hole top to ground)
-      drawQuad(
-        p(wallLeft,      obs.holeTop),
-        p(obs.holeLeft,  obs.holeTop),
-        p(obs.holeLeft,  0.0),
-        p(wallLeft,      0.0),
-        wallColorDark,
-      );
-      // Top face (thickness)
-      drawQuad(
-        p(wallLeft,     wallH),
-        p(obs.holeLeft, wallH),
-        pf(obs.holeLeft, wallH),
-        pf(wallLeft,     wallH),
-        wallColorLight,
-      );
+    if (obs.holeLeft > wl) {
+      quad(p(wl, wallH), p(obs.holeLeft, wallH), p(obs.holeLeft, obs.holeTop), p(wl, obs.holeTop), wallColor);
+      quad(p(wl, obs.holeTop), p(obs.holeLeft, obs.holeTop), p(obs.holeLeft, 0), p(wl, 0), wallColorDark);
+      quad(p(wl, wallH), p(obs.holeLeft, wallH), pf(obs.holeLeft, wallH), pf(wl, wallH), wallColorLight);
     }
-
-    // ── RIGHT slab (hole right edge to wall right edge) ───────────────────
-    if (obs.holeRight < wallRight) {
-      drawQuad(
-        p(obs.holeRight, wallH),
-        p(wallRight,     wallH),
-        p(wallRight,     obs.holeTop),
-        p(obs.holeRight, obs.holeTop),
-        wallColor,
-      );
-      drawQuad(
-        p(obs.holeRight, obs.holeTop),
-        p(wallRight,     obs.holeTop),
-        p(wallRight,     0.0),
-        p(obs.holeRight, 0.0),
-        wallColorDark,
-      );
-      drawQuad(
-        p(obs.holeRight, wallH),
-        p(wallRight,     wallH),
-        pf(wallRight,    wallH),
-        pf(obs.holeRight, wallH),
-        wallColorLight,
-      );
+    if (obs.holeRight < wr) {
+      quad(p(obs.holeRight, wallH), p(wr, wallH), p(wr, obs.holeTop), p(obs.holeRight, obs.holeTop), wallColor);
+      quad(p(obs.holeRight, obs.holeTop), p(wr, obs.holeTop), p(wr, 0), p(obs.holeRight, 0), wallColorDark);
+      quad(p(obs.holeRight, wallH), p(wr, wallH), pf(wr, wallH), pf(obs.holeRight, wallH), wallColorLight);
     }
-
-    // ── TOP slab (above the hole, spanning hole width) ─────────────────────
     if (obs.holeTop < wallH) {
-      drawQuad(
-        p(obs.holeLeft,  wallH),
-        p(obs.holeRight, wallH),
-        p(obs.holeRight, obs.holeTop),
-        p(obs.holeLeft,  obs.holeTop),
-        wallColor,
-      );
-      // Top face
-      drawQuad(
-        p(obs.holeLeft,  wallH),
-        p(obs.holeRight, wallH),
-        pf(obs.holeRight, wallH),
-        pf(obs.holeLeft,  wallH),
-        wallColorLight,
-      );
+      quad(p(obs.holeLeft, wallH), p(obs.holeRight, wallH), p(obs.holeRight, obs.holeTop), p(obs.holeLeft, obs.holeTop), wallColor);
+      quad(p(obs.holeLeft, wallH), p(obs.holeRight, wallH), pf(obs.holeRight, wallH), pf(obs.holeLeft, wallH), wallColorLight);
     }
-
-    // ── BOTTOM slab (if hole is floating above ground) ────────────────────
     if (obs.holeBottom > 0.0) {
-      drawQuad(
-        p(obs.holeLeft,  obs.holeBottom),
-        p(obs.holeRight, obs.holeBottom),
-        p(obs.holeRight, 0.0),
-        p(obs.holeLeft,  0.0),
-        wallColorDark,
-      );
+      quad(p(obs.holeLeft, obs.holeBottom), p(obs.holeRight, obs.holeBottom), p(obs.holeRight, 0), p(obs.holeLeft, 0), wallColorDark);
     }
 
-    // ── Brick texture lines (horizontal) ──────────────────────────────────
+    // Brick lines
     final brickPaint = Paint()
       ..color = Colors.black.withOpacity(0.18)
-      ..strokeWidth = 1.2
-      ..style = PaintingStyle.stroke;
+      ..strokeWidth = 1.2 ..style = PaintingStyle.stroke;
     for (double by = 0.18; by < wallH; by += 0.18) {
-      final la = p(wallLeft,  by);
-      final lb = p(wallRight, by);
-      if (la.dy < size.height * 0.1) break;
-      canvas.drawLine(la, lb, brickPaint);
+      final la = p(wl, by); if (la.dy < s.height * 0.1) break;
+      canvas.drawLine(la, p(wr, by), brickPaint);
     }
-    // Vertical brick lines
-    for (double bx = wallLeft + 0.25; bx < wallRight; bx += 0.25) {
-      final ba = p(bx, 0.0);
-      final bb = p(bx, wallH);
-      canvas.drawLine(ba, bb, brickPaint);
+    for (double bx = wl + 0.25; bx < wr; bx += 0.25) {
+      canvas.drawLine(p(bx, 0), p(bx, wallH), brickPaint);
     }
 
-    // ── Hole outline glow ──────────────────────────────────────────────────
-    final glowA = p(obs.holeLeft,  obs.holeBottom);
-    final glowB = p(obs.holeRight, obs.holeBottom);
-    final glowC = p(obs.holeRight, obs.holeTop);
-    final glowD = p(obs.holeLeft,  obs.holeTop);
-    final glowPath = Path()
-      ..moveTo(glowA.dx, glowA.dy)
-      ..lineTo(glowB.dx, glowB.dy)
-      ..lineTo(glowC.dx, glowC.dy)
-      ..lineTo(glowD.dx, glowD.dy)
-      ..close();
+    // Coloured hole glow
     canvas.drawPath(
-      glowPath,
+      Path()
+        ..moveTo(p(obs.holeLeft, obs.holeBottom).dx, p(obs.holeLeft, obs.holeBottom).dy)
+        ..lineTo(p(obs.holeRight, obs.holeBottom).dx, p(obs.holeRight, obs.holeBottom).dy)
+        ..lineTo(p(obs.holeRight, obs.holeTop).dx, p(obs.holeRight, obs.holeTop).dy)
+        ..lineTo(p(obs.holeLeft, obs.holeTop).dx, p(obs.holeLeft, obs.holeTop).dy)
+        ..close(),
       Paint()
-        ..color = const Color(0xFFFFE57A).withOpacity(0.6)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.5,
+        ..color = holeGlow.withOpacity(0.75)
+        ..style = PaintingStyle.stroke ..strokeWidth = 3.0,
     );
   }
 
-  void _drawBallShadow(Canvas canvas, Size size) {
-    final center = _project(ballX, 0.0, _roadZ, size);
-    final paint = Paint()
-      ..color = Colors.black.withOpacity(0.35)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+  void _drawBallShadow(Canvas canvas, Size s) {
+    final center = _project(ballX, 0.0, _roadZ, s);
     canvas.drawOval(
       Rect.fromCenter(
-        center: Offset(center.dx, center.dy - 4),
-        width:  45 * squishX,
-        height: 10,
-      ),
-      paint,
+          center: Offset(center.dx, center.dy - 4),
+          width: 45 * ballScaleX, height: 10),
+      Paint()
+        ..color = Colors.black.withOpacity(0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
     );
   }
 
-  void _drawBall(Canvas canvas, Size size) {
-    // Ball sits on the road at Z=0, Y=0 (ground level), center at Y=0.24
-    final center = _project(ballX, 0.24, _roadZ, size);
-
+  void _drawBall(Canvas canvas, Size s) {
+    // Centre Y rises when ball stretches tall
+    final center = _project(ballX, 0.24 * ballScaleY, _roadZ, s);
     const double radius = 22.0;
-    final double rx = radius * squishX;
-    final double ry = radius * squishY;
+    final double rx = radius * ballScaleX;
+    final double ry = radius * ballScaleY;
 
     // Glow
     canvas.drawOval(
@@ -614,51 +569,37 @@ class _JellyRunnerPainter extends CustomPainter {
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14),
     );
 
-    // Main ball gradient
-    final ballRect = Rect.fromCenter(
-        center: center, width: rx * 2, height: ry * 2);
+    // Body
+    final ballRect = Rect.fromCenter(center: center, width: rx * 2, height: ry * 2);
     canvas.drawOval(
       ballRect,
       Paint()
         ..shader = RadialGradient(
           center: const Alignment(-0.35, -0.4),
-          colors: const [
-            Color(0xFFFFD1E8),
-            Color(0xFFFF6B9D),
-            Color(0xFFD63B7A),
-          ],
+          colors: const [Color(0xFFFFD1E8), Color(0xFFFF6B9D), Color(0xFFD63B7A)],
           stops: const [0.0, 0.55, 1.0],
         ).createShader(ballRect),
     );
 
-    // Specular highlight
+    // Highlight
     canvas.drawOval(
       Rect.fromCenter(
-        center: Offset(center.dx - rx * 0.28, center.dy - ry * 0.3),
-        width:  rx * 0.55,
-        height: ry * 0.32,
-      ),
+          center: Offset(center.dx - rx * 0.28, center.dy - ry * 0.3),
+          width: rx * 0.55, height: ry * 0.32),
       Paint()..color = Colors.white.withOpacity(0.55),
     );
 
-    // Face emoji — drawn as text
+    // Face (size tracks ball height)
+    final faceSize = (14.0 + (ry - 22.0) * 0.4).clamp(10.0, 26.0);
     final tp = TextPainter(
-      text: const TextSpan(
-          text: '😊', style: TextStyle(fontSize: 20)),
+      text: TextSpan(text: '😊', style: TextStyle(fontSize: faceSize)),
       textDirection: TextDirection.ltr,
     )..layout();
-    tp.paint(
-      canvas,
-      Offset(center.dx - tp.width / 2, center.dy - tp.height / 2),
-    );
+    tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy - tp.height / 2));
   }
 
   @override
-  bool shouldRepaint(_JellyRunnerPainter old) =>
-      old.ballX      != ballX      ||
-          old.squishX    != squishX    ||
-          old.squishY    != squishY    ||
-          old.obstacles  != obstacles;
+  bool shouldRepaint(_JellyRunnerPainter old) => true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -678,12 +619,10 @@ class _PauseDialog extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(24),
           gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
             colors: [Color(0xFF1A0533), Color(0xFF0D1B4B)],
           ),
-          border: Border.all(
-              color: Colors.white.withOpacity(0.15), width: 1.5),
+          border: Border.all(color: Colors.white.withOpacity(0.15), width: 1.5),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -692,32 +631,21 @@ class _PauseDialog extends StatelessWidget {
             const SizedBox(height: 12),
             Text('Paused',
                 style: GoogleFonts.fredoka(
-                    fontSize: 32,
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600)),
+                    fontSize: 32, color: Colors.white, fontWeight: FontWeight.w600)),
             const SizedBox(height: 28),
-            _btn(
-              'Resume',
-              Icons.play_arrow_rounded,
-              const Color(0xFF6BFFD8),
-                  () { Navigator.pop(context); gc.resumeGame(); },
-            ),
+            _btn('Resume', Icons.play_arrow_rounded, const Color(0xFF6BFFD8), () {
+              Navigator.pop(context); gc.resumeGame();
+            }),
             const SizedBox(height: 14),
-            _btn(
-              'Menu',
-              Icons.home_rounded,
-              const Color(0xFFFF6B9D),
-                  () {
-                gc.startGame();
-                Navigator.of(context)..pop()..pop();
-              },
-            ),
+            _btn('Menu', Icons.home_rounded, const Color(0xFFFF6B9D), () {
+              gc.pauseGame(); // stop loop before navigating away
+              Navigator.of(context)..pop()..pop();
+            }),
           ],
         ),
       ),
     ).animate().scale(
-        duration: 400.ms,
-        curve: Curves.elasticOut,
+        duration: 400.ms, curve: Curves.elasticOut,
         begin: const Offset(0.7, 0.7));
   }
 
@@ -738,8 +666,7 @@ class _PauseDialog extends StatelessWidget {
               const SizedBox(width: 8),
               Text(label,
                   style: GoogleFonts.poppins(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      fontSize: 16, fontWeight: FontWeight.w600,
                       color: Colors.white)),
             ],
           ),

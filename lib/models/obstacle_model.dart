@@ -1,22 +1,23 @@
+import '../controllers/game_controller.dart';
+
 // Each obstacle is an orange brick wall with a rectangular hole cut out.
-// The hole position (holeLeft, holeTop) and size (holeWidth, holeHeight)
-// define where the ball must pass through.
-// z is the world-depth position (increases as obstacles spawn further away).
+// holeType tells the player what shape they need to pass through.
 
 class ObstacleModel {
-  double z; // world Z position (depth), decreases each frame as it approaches
-  final double holeLeft;   // left edge of hole, in world X units (-1..1 range, 0=center)
-  final double holeRight;  // right edge of hole
-  final double holeBottom; // bottom of hole in world Y (0=ground, 1=top of wall)
-  final double holeTop;    // top of hole
+  double z;
+  final double holeLeft;
+  final double holeRight;
+  final double holeBottom = 0.0; // always ground level — ball cannot jump
+  final double holeTop;
+  final HoleType holeType;
   bool passed;
 
   ObstacleModel({
     required this.z,
     required this.holeLeft,
     required this.holeRight,
-    required this.holeBottom,
     required this.holeTop,
+    this.holeType = HoleType.normal,
     this.passed = false,
   });
 }
