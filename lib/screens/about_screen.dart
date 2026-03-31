@@ -151,14 +151,6 @@ class _AboutScreenState extends State<AboutScreen>
 
                       const SizedBox(height: 4),
 
-                      Text(
-                        'Version 1.0.0',
-                        style: GoogleFonts.poppins(
-                          fontSize: 13,
-                          color: Colors.white.withOpacity(0.4),
-                          letterSpacing: 1.5,
-                        ),
-                      ).animate(delay: 300.ms).fadeIn(),
 
                       const SizedBox(height: 32),
 
@@ -318,13 +310,6 @@ class _AboutScreenState extends State<AboutScreen>
                       const SizedBox(height: 32),
 
                       // Footer
-                      Text(
-                        'Made with ❤️ & Flutter',
-                        style: GoogleFonts.poppins(
-                          fontSize: 13,
-                          color: Colors.white.withOpacity(0.35),
-                        ),
-                      ).animate(delay: 800.ms).fadeIn(),
                       const SizedBox(height: 8),
                       Text(
                         '© 2024 SquishDash. All rights reserved.',
@@ -483,7 +468,7 @@ class _DevInfoRow extends StatelessWidget {
               Text(
                 value,
                 style: GoogleFonts.poppins(
-                  fontSize: 14,
+                  fontSize: 12,
                   color: Colors.white,
                   fontWeight: FontWeight.w500,
                 ),

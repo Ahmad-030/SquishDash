@@ -7,7 +7,6 @@ import '../models/ball_model.dart';
 import 'score_controller.dart';
 
 enum GameState { idle, playing, paused, gameOver }
-
 enum HoleType { normal, tall, wide }
 
 class GameController extends GetxController with GetTickerProviderStateMixin {
@@ -57,11 +56,12 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     screenHeight = h;
   }
 
-  // ─── Game lifecycle ────────────────────────────────────────────────────────
+  // ── Game lifecycle ─────────────────────────────────────────────────────────
 
+  /// Called by GameScreen.initState — cancels all timers and resets data.
+  /// IMPORTANT: sets gameState = idle synchronously so the Obx gameOver
+  /// listener in the new screen never sees the old gameOver value.
   void startGame() {
-    // Cancel ALL timers first — critical to prevent stale loops from a
-    // previous round firing immediately and ending the new game.
     _cancelTimers();
 
     obstacles.clear();
@@ -73,27 +73,25 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     _timeSinceLastSpawn = 0;
     _spawnInterval      = 3.5;
 
-    // KEY FIX: Always force back to idle regardless of previous state
-    // (paused, gameOver, etc.) so beginPlaying() guard passes correctly.
+    // Must be set LAST so Obx listeners see idle, not gameOver.
     gameState.value = GameState.idle;
   }
 
+  /// Called after the countdown finishes — starts the game loop.
   void beginPlaying() {
-    // KEY FIX: Accept idle OR paused state to handle edge cases where
-    // dispose() fires pauseGame() just before/during startGame() reset.
-    if (gameState.value != GameState.idle &&
-        gameState.value != GameState.paused) return;
+    // Only start if we're in idle state (set by startGame).
+    // Do NOT accept paused here — that's resumeGame's job.
+    if (gameState.value != GameState.idle) return;
     gameState.value = GameState.playing;
     _startLoops();
   }
 
   void pauseGame() {
     _cancelTimers();
-    // Only transition to paused if currently playing; otherwise leave as-is
-    // (e.g. idle state should remain idle so beginPlaying() works correctly).
     if (gameState.value == GameState.playing) {
       gameState.value = GameState.paused;
     }
+    // If idle/gameOver, leave state unchanged — startGame already handles reset.
   }
 
   void resumeGame() {
@@ -104,15 +102,16 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
 
   void _endGame() {
     _cancelTimers();
-    gameState.value = GameState.gameOver;
     scoreController.submitScore(score.value);
+    // Set gameOver AFTER submitting score and cancelling timers.
+    gameState.value = GameState.gameOver;
   }
 
   void _cancelTimers() {
-    _gameLoop?.cancel();          _gameLoop = null;
-    _speedIncreaser?.cancel();    _speedIncreaser = null;
-    _squishTimer?.cancel();       _squishTimer = null;
-    _firstObstacleDelay?.cancel();_firstObstacleDelay = null;
+    _gameLoop?.cancel();           _gameLoop = null;
+    _speedIncreaser?.cancel();     _speedIncreaser = null;
+    _squishTimer?.cancel();        _squishTimer = null;
+    _firstObstacleDelay?.cancel(); _firstObstacleDelay = null;
   }
 
   void _startLoops() {
@@ -124,7 +123,7 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
 
     _speedIncreaser = Timer.periodic(const Duration(seconds: 5), (_) {
       gameSpeed.value = (gameSpeed.value + 0.4).clamp(5.0, 14.0);
-      _spawnInterval  = (_spawnInterval  - 0.1).clamp(1.8, 3.5);
+      _spawnInterval  = (_spawnInterval - 0.1).clamp(1.8, 3.5);
     });
 
     _firstObstacleDelay = Timer(const Duration(milliseconds: 2500), () {
@@ -132,15 +131,15 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     });
   }
 
-  // ─── Spawning ─────────────────────────────────────────────────────────────
+  // ── Spawning ───────────────────────────────────────────────────────────────
 
   void _spawnObstacle() {
     if (gameState.value != GameState.playing) return;
     _timeSinceLastSpawn = 0;
 
     final holeType = HoleType.values[_random.nextInt(HoleType.values.length)];
-
     double holeW, holeH;
+
     switch (holeType) {
       case HoleType.tall:
         holeW = _random.nextDouble() * 0.2 + 0.35;
@@ -163,15 +162,15 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     final double holeRight  = holeCenter + holeW / 2;
 
     obstacles.add(ObstacleModel(
-      z:         spawnZ,
-      holeLeft:  holeLeft,
+      z: spawnZ,
+      holeLeft: holeLeft,
       holeRight: holeRight,
-      holeTop:   holeH,
-      holeType:  holeType,
+      holeTop: holeH,
+      holeType: holeType,
     ));
   }
 
-  // ─── Update loop ──────────────────────────────────────────────────────────
+  // ── Update loop ────────────────────────────────────────────────────────────
 
   void _update(double dt) {
     if (gameState.value != GameState.playing) return;
@@ -188,7 +187,6 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     bool hit = false;
 
     final b = ball.value;
-
     final double playerScaleY = b.scaleY.clamp(0.5, 1.8);
     final double ballHalfW    = (0.22 / playerScaleY).clamp(0.08, 0.35);
     final double ballH        = 0.48 * playerScaleY;
@@ -202,10 +200,12 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     for (final obs in obstacles) {
       obs.z -= dz;
 
-      if (!obs.passed && obs.z <= collisionZ + 0.3 && obs.z >= collisionZ - 0.3) {
+      if (!obs.passed &&
+          obs.z <= collisionZ + 0.3 &&
+          obs.z >= collisionZ - 0.3) {
         obs.passed = true;
 
-        final bool inHoleX = ballLeft  >= obs.holeLeft   && ballRight  <= obs.holeRight;
+        final bool inHoleX = ballLeft  >= obs.holeLeft  && ballRight  <= obs.holeRight;
         final bool inHoleY = ballBottom >= obs.holeBottom && ballTop    <= obs.holeTop;
 
         if (inHoleX && inHoleY) {
@@ -223,7 +223,7 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     if (hit) _endGame();
   }
 
-  // ─── Squish animation ─────────────────────────────────────────────────────
+  // ── Squish animation ───────────────────────────────────────────────────────
 
   void _triggerSquish() {
     squishX.value = 1.4;
@@ -239,7 +239,7 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     });
   }
 
-  // ─── Input ────────────────────────────────────────────────────────────────
+  // ── Input ──────────────────────────────────────────────────────────────────
 
   void onDragStart(double screenX, double screenY) {
     _dragStartX      = screenX;

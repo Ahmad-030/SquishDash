@@ -162,14 +162,7 @@ class _MenuScreenState extends State<MenuScreen>
 
               const Spacer(),
 
-              Text(
-                'v1.0.0',
-                style: GoogleFonts.poppins(
-                  fontSize: 11,
-                  color: Colors.white.withOpacity(0.25),
-                ),
-              ).animate(delay: 800.ms).fadeIn(),
-              const SizedBox(height: 16),
+
             ],
           ),
         ),
