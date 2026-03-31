@@ -14,7 +14,7 @@ class GameOverScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final GameController gc = Get.find();
     final ScoreController sc = Get.find();
-    final int finalScore = gc.displayScore.value;
+    final int finalScore = gc.score.value;
     final bool isNewBest = sc.highScores.isNotEmpty &&
         sc.highScores.first == finalScore &&
         sc.highScores.where((s) => s == finalScore).length == 1;
@@ -35,23 +35,25 @@ class GameOverScreen extends StatelessWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Sad jelly
-                  const Text('😢', style: TextStyle(fontSize: 70))
+                  const Text('😵', style: TextStyle(fontSize: 70))
                       .animate()
                       .scale(
-                          duration: 600.ms,
-                          curve: Curves.elasticOut,
-                          begin: const Offset(0, 0))
+                      duration: 600.ms,
+                      curve: Curves.elasticOut,
+                      begin: const Offset(0, 0))
                       .shake(hz: 3, delay: 300.ms),
 
                   const SizedBox(height: 20),
 
                   Text(
-                    'Squished!',
+                    'Splat!',
                     style: GoogleFonts.fredoka(
-                      fontSize: 48,
+                      fontSize: 52,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFFFF6B9D),
+                      foreground: Paint()
+                        ..shader = const LinearGradient(
+                          colors: [Color(0xFFFF6B35), Color(0xFFFFD93D)],
+                        ).createShader(const Rect.fromLTWH(0, 0, 200, 60)),
                     ),
                   ).animate().fadeIn(delay: 200.ms).slideY(begin: 0.3),
 
@@ -76,23 +78,17 @@ class GameOverScreen extends StatelessWidget {
                     ),
                     child: Column(
                       children: [
-                        Text(
-                          'Score',
-                          style: GoogleFonts.poppins(
-                            fontSize: 14,
-                            color: Colors.white.withOpacity(0.5),
-                            letterSpacing: 2,
-                          ),
-                        ),
+                        Text('Score',
+                            style: GoogleFonts.poppins(
+                                fontSize: 14,
+                                color: Colors.white.withOpacity(0.5),
+                                letterSpacing: 2)),
                         const SizedBox(height: 6),
-                        Text(
-                          '$finalScore',
-                          style: GoogleFonts.fredoka(
-                            fontSize: 64,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
+                        Text('$finalScore',
+                            style: GoogleFonts.fredoka(
+                                fontSize: 64,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white)),
                         if (isNewBest) ...[
                           const SizedBox(height: 8),
                           Container(
@@ -101,11 +97,10 @@ class GameOverScreen extends StatelessWidget {
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(20),
                               gradient: const LinearGradient(
-                                colors: [
-                                  Color(0xFFFFD86B),
-                                  Color(0xFFFF9E3B)
-                                ],
-                              ),
+                                  colors: [
+                                    Color(0xFFFFD86B),
+                                    Color(0xFFFF9E3B)
+                                  ]),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -113,22 +108,16 @@ class GameOverScreen extends StatelessWidget {
                                 const Icon(Icons.emoji_events_rounded,
                                     color: Colors.white, size: 16),
                                 const SizedBox(width: 6),
-                                Text(
-                                  'New Best!',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
-                                  ),
-                                ),
+                                Text('New Best!',
+                                    style: GoogleFonts.poppins(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white)),
                               ],
                             ),
                           )
                               .animate(onPlay: (c) => c.repeat(reverse: true))
-                              .scaleXY(
-                                  begin: 0.95,
-                                  end: 1.05,
-                                  duration: 600.ms),
+                              .scaleXY(begin: 0.95, end: 1.05, duration: 600.ms),
                         ],
                         const SizedBox(height: 16),
                         Row(
@@ -137,14 +126,11 @@ class GameOverScreen extends StatelessWidget {
                             const Icon(Icons.emoji_events_outlined,
                                 color: Color(0xFFFFD86B), size: 18),
                             const SizedBox(width: 6),
-                            Obx(() => Text(
-                                  'Best: ${sc.bestScore.value}',
-                                  style: GoogleFonts.poppins(
+                            Obx(() => Text('Best: ${sc.bestScore.value}',
+                                style: GoogleFonts.poppins(
                                     fontSize: 14,
                                     color: const Color(0xFFFFD86B),
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                )),
+                                    fontWeight: FontWeight.w500))),
                           ],
                         ),
                       ],
@@ -156,25 +142,24 @@ class GameOverScreen extends StatelessWidget {
 
                   const SizedBox(height: 40),
 
-                  // Retry button
-                  _ActionButton(
+                  _Btn(
                     label: 'Play Again',
                     icon: Icons.replay_rounded,
-                    color: const Color(0xFFFF6B9D),
+                    color: const Color(0xFFFF6B35),
                     onTap: () => Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(builder: (_) => const GameScreen()),
-                    ),
+                        MaterialPageRoute(
+                            builder: (_) => const GameScreen())),
                     delay: 500,
                   ),
                   const SizedBox(height: 16),
-                  _ActionButton(
+                  _Btn(
                     label: 'Menu',
                     icon: Icons.home_rounded,
                     color: const Color(0xFF6B9DFF),
                     onTap: () => Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const MenuScreen()),
-                      (r) => false,
-                    ),
+                        MaterialPageRoute(
+                            builder: (_) => const MenuScreen()),
+                            (r) => false),
                     delay: 600,
                   ),
                 ],
@@ -187,36 +172,31 @@ class GameOverScreen extends StatelessWidget {
   }
 }
 
-class _ActionButton extends StatefulWidget {
+class _Btn extends StatefulWidget {
   final String label;
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
   final int delay;
-
-  const _ActionButton({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-    required this.delay,
-  });
+  const _Btn(
+      {required this.label,
+        required this.icon,
+        required this.color,
+        required this.onTap,
+        required this.delay});
 
   @override
-  State<_ActionButton> createState() => _ActionButtonState();
+  State<_Btn> createState() => _BtnState();
 }
 
-class _ActionButtonState extends State<_ActionButton> {
+class _BtnState extends State<_Btn> {
   bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) {
-        setState(() => _pressed = false);
-        widget.onTap();
-      },
+      onTapUp: (_) { setState(() => _pressed = false); widget.onTap(); },
       onTapCancel: () => setState(() => _pressed = false),
       child: AnimatedScale(
         scale: _pressed ? 0.95 : 1.0,
@@ -225,30 +205,23 @@ class _ActionButtonState extends State<_ActionButton> {
           height: 58,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            gradient: LinearGradient(
-              colors: [
-                widget.color.withOpacity(0.25),
-                widget.color.withOpacity(0.1),
-              ],
-            ),
+            gradient: LinearGradient(colors: [
+              widget.color.withOpacity(0.25),
+              widget.color.withOpacity(0.1)
+            ]),
             border: Border.all(
-              color: widget.color.withOpacity(0.5),
-              width: 1.5,
-            ),
+                color: widget.color.withOpacity(0.5), width: 1.5),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(widget.icon, color: widget.color, size: 22),
               const SizedBox(width: 10),
-              Text(
-                widget.label,
-                style: GoogleFonts.poppins(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
+              Text(widget.label,
+                  style: GoogleFonts.poppins(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white)),
             ],
           ),
         ),

@@ -5,7 +5,7 @@ class ScoreController extends GetxController {
   final RxList<int> highScores = <int>[].obs;
   final RxInt bestScore = 0.obs;
 
-  static const String _key = 'high_scores';
+  static const String _key = 'high_scores_v2';
 
   @override
   void onInit() {
