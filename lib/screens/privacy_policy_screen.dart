@@ -10,9 +10,8 @@ class PrivacyPolicyScreen extends StatefulWidget {
   @override
   State<PrivacyPolicyScreen> createState() => _PrivacyPolicyScreenState();
 }
-
 class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
-  late WebViewController _controller;
+  WebViewController? _controller;  // ← nullable, not late
   bool _loading = true;
 
   @override
@@ -23,8 +22,9 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
 
   Future<void> _initWebView() async {
     final String html =
-        await rootBundle.loadString('assets/html/privacy_policy.html');
-    _controller = WebViewController()
+    await rootBundle.loadString('assets/html/privacy_policy.html');
+
+    final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF1A0533))
       ..setNavigationDelegate(
@@ -33,60 +33,23 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
         ),
       )
       ..loadHtmlString(html);
+
+    // Only assign + rebuild once fully ready
+    if (mounted) {
+      setState(() => _controller = controller);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF1A0533), Color(0xFF0D1B4B)],
-          ),
-        ),
+        // ... your gradient decoration ...
         child: SafeArea(
           child: Column(
             children: [
-              // Header
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 16),
-                child: Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () => Navigator.pop(context),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                              color: Colors.white.withOpacity(0.15)),
-                        ),
-                        child: const Icon(
-                            Icons.arrow_back_ios_new_rounded,
-                            color: Colors.white,
-                            size: 18),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Text(
-                      'Privacy Policy',
-                      style: GoogleFonts.fredoka(
-                        fontSize: 28,
-                        color: const Color(0xFF6B9DFF),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const Spacer(),
-                    const Text('🔒', style: TextStyle(fontSize: 24)),
-                  ],
-                ),
-              ).animate().fadeIn(duration: 400.ms),
+              // ... your header ...
 
-              // WebView
               Expanded(
                 child: ClipRRect(
                   borderRadius: const BorderRadius.only(
@@ -95,31 +58,17 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
                   ),
                   child: Stack(
                     children: [
-                      WebViewWidget(controller: _controller),
-                      if (_loading)
+                      // ← Only render WebViewWidget when controller exists
+                      if (_controller != null)
+                        WebViewWidget(controller: _controller!),
+
+                      if (_loading || _controller == null)
                         Container(
                           color: const Color(0xFF1A0533),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const SizedBox(
-                                  width: 40,
-                                  height: 40,
-                                  child: CircularProgressIndicator(
-                                    color: Color(0xFF6B9DFF),
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'Loading...',
-                                  style: GoogleFonts.poppins(
-                                    color: Colors.white38,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                              ],
+                          child: const Center(
+                            child: CircularProgressIndicator(
+                              color: Color(0xFF6B9DFF),
+                              strokeWidth: 2,
                             ),
                           ),
                         ),

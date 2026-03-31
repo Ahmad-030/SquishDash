@@ -8,7 +8,6 @@ import 'score_controller.dart';
 
 enum GameState { idle, playing, paused, gameOver }
 
-// What shape the hole demands from the ball
 enum HoleType { normal, tall, wide }
 
 class GameController extends GetxController with GetTickerProviderStateMixin {
@@ -20,21 +19,18 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
   final RxInt score = 0.obs;
   final RxDouble gameSpeed = 5.0.obs;
 
-  // Squish animation (triggered on passing through a hole)
   final RxDouble squishX = 1.0.obs;
   final RxDouble squishY = 1.0.obs;
 
-  // Road parameters in world units
   static const double roadHalfWidth = 1.0;
   static const double wallHeight    = 1.0;
   static const double spawnZ        = 18.0;
   static const double despawnZ      = -1.0;
   static const double collisionZ    = 0.0;
 
-  // Drag state
-  double _dragStartX    = 0;
-  double _dragStartY    = 0;
-  double _ballStartX    = 0;
+  double _dragStartX      = 0;
+  double _dragStartY      = 0;
+  double _ballStartX      = 0;
   double _ballStartScaleY = 1.0;
 
   Timer? _gameLoop;
@@ -51,11 +47,6 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
   double _spawnInterval      = 3.5;
 
   @override
-  void onInit() {
-    super.onInit();
-  }
-
-  @override
   void onClose() {
     _cancelTimers();
     super.onClose();
@@ -69,8 +60,8 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
   // ─── Game lifecycle ────────────────────────────────────────────────────────
 
   void startGame() {
-    // Always cancel any running timers first — prevents stale loops
-    // from a previous round immediately ending the new game.
+    // Cancel ALL timers first — critical to prevent stale loops from a
+    // previous round firing immediately and ending the new game.
     _cancelTimers();
 
     obstacles.clear();
@@ -81,20 +72,25 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     squishY.value       = 1.0;
     _timeSinceLastSpawn = 0;
     _spawnInterval      = 3.5;
-    gameState.value     = GameState.idle; // idle until GameScreen calls beginPlaying()
+
+    // KEY FIX: Always force back to idle regardless of previous state
+    // (paused, gameOver, etc.) so beginPlaying() guard passes correctly.
+    gameState.value = GameState.idle;
   }
 
-  // Called by GameScreen once it has fully initialised and the countdown starts.
-  // Separating reset from loop-start prevents timer overlap across rounds.
   void beginPlaying() {
-    if (gameState.value != GameState.idle) return;
+    // KEY FIX: Accept idle OR paused state to handle edge cases where
+    // dispose() fires pauseGame() just before/during startGame() reset.
+    if (gameState.value != GameState.idle &&
+        gameState.value != GameState.paused) return;
     gameState.value = GameState.playing;
     _startLoops();
   }
 
   void pauseGame() {
-    // Cancel timers regardless of state so dispose() is always safe.
     _cancelTimers();
+    // Only transition to paused if currently playing; otherwise leave as-is
+    // (e.g. idle state should remain idle so beginPlaying() works correctly).
     if (gameState.value == GameState.playing) {
       gameState.value = GameState.paused;
     }
@@ -107,16 +103,16 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
   }
 
   void _endGame() {
-    gameState.value = GameState.gameOver;
     _cancelTimers();
+    gameState.value = GameState.gameOver;
     scoreController.submitScore(score.value);
   }
 
   void _cancelTimers() {
-    _gameLoop?.cancel();
-    _speedIncreaser?.cancel();
-    _squishTimer?.cancel();
-    _firstObstacleDelay?.cancel();
+    _gameLoop?.cancel();          _gameLoop = null;
+    _speedIncreaser?.cancel();    _speedIncreaser = null;
+    _squishTimer?.cancel();       _squishTimer = null;
+    _firstObstacleDelay?.cancel();_firstObstacleDelay = null;
   }
 
   void _startLoops() {
@@ -142,46 +138,36 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     if (gameState.value != GameState.playing) return;
     _timeSinceLastSpawn = 0;
 
-    // Pick a random hole type — this determines what shape the ball must be
     final holeType = HoleType.values[_random.nextInt(HoleType.values.length)];
 
     double holeW, holeH;
-
     switch (holeType) {
       case HoleType.tall:
-      // Tall narrow hole — ball must be stretched vertically (scaleY > 1.2)
-        holeW = _random.nextDouble() * 0.2 + 0.35; // 0.35..0.55 — narrow
-        holeH = _random.nextDouble() * 0.15 + 0.65; // 0.65..0.80 — tall
+        holeW = _random.nextDouble() * 0.2 + 0.35;
+        holeH = _random.nextDouble() * 0.15 + 0.65;
         break;
       case HoleType.wide:
-      // Wide flat hole — ball must be squished (scaleY < 0.8)
-        holeW = _random.nextDouble() * 0.3 + 0.8;  // 0.80..1.10 — wide
-        holeH = _random.nextDouble() * 0.1 + 0.28; // 0.28..0.38 — short
+        holeW = _random.nextDouble() * 0.3 + 0.8;
+        holeH = _random.nextDouble() * 0.1 + 0.28;
         break;
       case HoleType.normal:
       default:
-      // Normal hole — any ball shape fits
-        holeW = _random.nextDouble() * 0.5 + 0.7;  // 0.70..1.20
-        holeH = _random.nextDouble() * 0.25 + 0.4; // 0.40..0.65
+        holeW = _random.nextDouble() * 0.5 + 0.7;
+        holeH = _random.nextDouble() * 0.25 + 0.4;
         break;
     }
 
-    // Hole horizontal centre with random shift
-    final double maxShift = (roadHalfWidth * 2 - holeW) / 2 - 0.05;
+    final double maxShift   = (roadHalfWidth * 2 - holeW) / 2 - 0.05;
     final double holeCenter = (_random.nextDouble() * 2 - 1) * maxShift.clamp(0.0, 0.6);
     final double holeLeft   = holeCenter - holeW / 2;
     final double holeRight  = holeCenter + holeW / 2;
 
-    // Hole always starts at ground level — ball cannot jump
-    const double holeBottom = 0.0;
-    final double holeTop    = holeBottom + holeH;
-
     obstacles.add(ObstacleModel(
-      z:        spawnZ,
-      holeLeft: holeLeft,
+      z:         spawnZ,
+      holeLeft:  holeLeft,
       holeRight: holeRight,
-      holeTop:  holeTop,
-      holeType: holeType,
+      holeTop:   holeH,
+      holeType:  holeType,
     ));
   }
 
@@ -203,14 +189,10 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
 
     final b = ball.value;
 
-    // Ball bounding box is affected by the player's scale choice:
-    //   scaleY > 1 → ball is taller and narrower
-    //   scaleY < 1 → ball is shorter and wider
-    // Base half-width = 0.22, base height = 0.48
     final double playerScaleY = b.scaleY.clamp(0.5, 1.8);
-    final double ballHalfW = (0.22 / playerScaleY).clamp(0.08, 0.35);
-    final double ballH     = 0.48 * playerScaleY;
-    const double tolerance = 0.04;
+    final double ballHalfW    = (0.22 / playerScaleY).clamp(0.08, 0.35);
+    final double ballH        = 0.48 * playerScaleY;
+    const double tolerance    = 0.04;
 
     final double ballLeft   = b.x - ballHalfW + tolerance;
     final double ballRight  = b.x + ballHalfW - tolerance;
@@ -223,7 +205,7 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
       if (!obs.passed && obs.z <= collisionZ + 0.3 && obs.z >= collisionZ - 0.3) {
         obs.passed = true;
 
-        final bool inHoleX = ballLeft  >= obs.holeLeft  && ballRight  <= obs.holeRight;
+        final bool inHoleX = ballLeft  >= obs.holeLeft   && ballRight  <= obs.holeRight;
         final bool inHoleY = ballBottom >= obs.holeBottom && ballTop    <= obs.holeTop;
 
         if (inHoleX && inHoleY) {
@@ -241,7 +223,7 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
     if (hit) _endGame();
   }
 
-  // ─── Squish animation (on successful pass-through) ────────────────────────
+  // ─── Squish animation ─────────────────────────────────────────────────────
 
   void _triggerSquish() {
     squishX.value = 1.4;
@@ -260,28 +242,21 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
   // ─── Input ────────────────────────────────────────────────────────────────
 
   void onDragStart(double screenX, double screenY) {
-    _dragStartX       = screenX;
-    _dragStartY       = screenY;
-    _ballStartX       = ball.value.x;
-    _ballStartScaleY  = ball.value.scaleY;
+    _dragStartX      = screenX;
+    _dragStartY      = screenY;
+    _ballStartX      = ball.value.x;
+    _ballStartScaleY = ball.value.scaleY;
   }
 
   void onDragUpdate(double screenX, double screenY) {
     if (gameState.value != GameState.playing) return;
 
-    // Horizontal → move ball left/right
-    final double dx    = (screenX - _dragStartX) / (screenWidth / 2);
-    final double newX  = (_ballStartX + dx * 1.4)
+    final double dx     = (screenX - _dragStartX) / (screenWidth / 2);
+    final double newX   = (_ballStartX + dx * 1.4)
         .clamp(-roadHalfWidth + 0.26, roadHalfWidth - 0.26);
 
-    // Vertical → stretch / squish ball
-    // Drag UP   → scaleY increases (ball gets taller)
-    // Drag DOWN → scaleY decreases (ball gets shorter/wider)
-    final double dy       = (screenY - _dragStartY) / (screenHeight * 0.3);
-    final double newScaleY = (_ballStartScaleY - dy * 1.2) // negative because screen Y is inverted
-        .clamp(0.5, 1.8);
-
-    // scaleX is inverse of scaleY to preserve approximate volume
+    final double dy        = (screenY - _dragStartY) / (screenHeight * 0.3);
+    final double newScaleY = (_ballStartScaleY - dy * 1.2).clamp(0.5, 1.8);
     final double newScaleX = (1.0 / newScaleY).clamp(0.6, 1.6);
 
     ball.value = ball.value.copyWith(
@@ -292,7 +267,6 @@ class GameController extends GetxController with GetTickerProviderStateMixin {
   }
 
   void onDragEnd() {
-    // Smoothly snap scale back to normal over next few frames via timer
     _squishTimer?.cancel();
     _squishTimer = Timer(const Duration(milliseconds: 200), () {
       if (gameState.value == GameState.playing) {

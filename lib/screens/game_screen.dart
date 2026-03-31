@@ -22,6 +22,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   bool _showCountdown = true;
 
   late AnimationController _countdownAnim;
+  late AnimationController _pulseAnim;
 
   @override
   void initState() {
@@ -34,12 +35,17 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 600),
     );
 
+    _pulseAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final size = MediaQuery.of(context).size;
       gc.setScreenSize(size.width, size.height);
-      gc.startGame();   // resets state + cancels old timers, sets idle
-      _runCountdown();  // countdown finishes → calls gc.beginPlaying()
+      gc.startGame();
+      _runCountdown();
     });
   }
 
@@ -52,14 +58,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
     if (!mounted) return;
     setState(() => _showCountdown = false);
-    gc.beginPlaying(); // start the game loop AFTER countdown finishes
+    gc.beginPlaying();
   }
 
   @override
   void dispose() {
     _countdownAnim.dispose();
-    // Always stop the loop when this screen is disposed —
-    // covers play-again, menu navigation, and back gestures.
+    _pulseAnim.dispose();
     gc.pauseGame();
     super.dispose();
   }
@@ -83,14 +88,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
     return Scaffold(
       body: GestureDetector(
-        // Both axes wired: X = move left/right, Y = stretch/squish
         onPanStart:  (d) => gc.onDragStart(d.localPosition.dx, d.localPosition.dy),
         onPanUpdate: (d) => gc.onDragUpdate(d.localPosition.dx, d.localPosition.dy),
         onPanEnd:    (_) => gc.onDragEnd(),
         child: Container(
           width: size.width,
           height: size.height,
-          color: const Color(0xFF1A1A2E),
+          color: const Color(0xFF0D0A1E),
           child: Stack(
             children: [
               // 3D Game World
@@ -99,7 +103,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 final ball      = gc.ball.value;
                 final sx        = gc.squishX.value;
                 final sy        = gc.squishY.value;
-
                 return SizedBox(
                   width: size.width,
                   height: size.height,
@@ -122,60 +125,27 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 child: SafeArea(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 12),
+                        horizontal: 16, vertical: 10),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Obx(() => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${gc.score.value}',
-                              style: GoogleFonts.fredoka(
-                                fontSize: 38,
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                                shadows: [
-                                  Shadow(
-                                    color: Colors.black.withOpacity(0.4),
-                                    blurRadius: 8,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Text(
-                              'Best: ${gc.scoreController.bestScore.value}',
-                              style: GoogleFonts.poppins(
-                                fontSize: 11,
-                                color: Colors.white.withOpacity(0.5),
-                              ),
-                            ),
-                          ],
+                        Obx(() => _ScorePanel(
+                          score: gc.score.value,
+                          best:  gc.scoreController.bestScore.value,
                         )),
-                        GestureDetector(
-                          onTap: () {
-                            gc.pauseGame();
-                            _showPauseDialog(context);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.3),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                  color: Colors.white.withOpacity(0.2)),
-                            ),
-                            child: const Icon(Icons.pause_rounded,
-                                color: Colors.white, size: 22),
-                          ),
-                        ),
+                        Obx(() => _SpeedBadge(speed: gc.gameSpeed.value)),
+                        _PauseButton(onTap: () {
+                          gc.pauseGame();
+                          _showPauseDialog(context);
+                        }),
                       ],
                     ),
                   ),
                 ),
               ),
 
-              // Shape hint — shows what the nearest upcoming wall needs
+              // Shape hint
               Obx(() {
                 final obs = gc.obstacles
                     .where((o) => !o.passed)
@@ -186,128 +156,38 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 if (obs == null || gc.score.value < 5) {
                   return const SizedBox.shrink();
                 }
-
-                String hint;
-                Color hintColor;
-                IconData hintIcon;
-
+                String hint; Color hintColor; IconData hintIcon;
                 switch (obs.holeType) {
                   case HoleType.tall:
-                    hint      = 'Stretch UP!';
-                    hintColor = const Color(0xFF6BFFD8);
-                    hintIcon  = Icons.height_rounded;
-                    break;
+                    hint = 'STRETCH UP'; hintColor = const Color(0xFF00FFD1);
+                    hintIcon = Icons.expand_rounded; break;
                   case HoleType.wide:
-                    hint      = 'Squish FLAT!';
-                    hintColor = const Color(0xFFFFD86B);
-                    hintIcon  = Icons.swap_vert_rounded;
-                    break;
+                    hint = 'SQUISH FLAT'; hintColor = const Color(0xFFFFD600);
+                    hintIcon = Icons.compress_rounded; break;
                   default:
-                    hint      = 'Any shape';
-                    hintColor = Colors.white54;
-                    hintIcon  = Icons.circle_outlined;
+                    hint = 'ANY SHAPE'; hintColor = Colors.white60;
+                    hintIcon = Icons.circle_outlined;
                 }
-
                 return Positioned(
-                  bottom: 80, left: 0, right: 0,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: hintColor.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(30),
-                        border: Border.all(
-                            color: hintColor.withOpacity(0.5), width: 1.5),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(hintIcon, color: hintColor, size: 18),
-                          const SizedBox(width: 8),
-                          Text(
-                            hint,
-                            style: GoogleFonts.fredoka(
-                              fontSize: 18,
-                              color: hintColor,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  bottom: 90, left: 0, right: 0,
+                  child: Center(child: _ShapeHintBadge(
+                    hint: hint, color: hintColor, icon: hintIcon,
+                  )),
                 );
               }),
 
-              // Early-game drag hint
+              // Tutorial hint
               Obx(() {
                 if (gc.score.value > 25) return const SizedBox.shrink();
                 return Positioned(
-                  bottom: 40, left: 0, right: 0,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.open_with_rounded,
-                          color: Colors.white38, size: 18),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Drag left/right to move  •  up/down to reshape',
-                        style: GoogleFonts.poppins(
-                            fontSize: 12, color: Colors.white38),
-                      ),
-                    ],
-                  )
-                      .animate(onPlay: (c) => c.repeat(reverse: true))
-                      .fadeIn(duration: 800.ms)
-                      .then()
-                      .fadeOut(duration: 800.ms),
+                  bottom: 28, left: 0, right: 0,
+                  child: _TutorialHint(pulseAnim: _pulseAnim),
                 );
               }),
 
               // Countdown overlay
               if (_showCountdown)
-                Positioned.fill(
-                  child: Container(
-                    color: Colors.black.withOpacity(0.45),
-                    child: Center(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
-                        transitionBuilder: (child, anim) => ScaleTransition(
-                          scale: CurvedAnimation(
-                              parent: anim, curve: Curves.elasticOut),
-                          child: FadeTransition(opacity: anim, child: child),
-                        ),
-                        child: _countdown > 0
-                            ? Text(
-                          '$_countdown',
-                          key: ValueKey(_countdown),
-                          style: GoogleFonts.fredoka(
-                            fontSize: 130,
-                            fontWeight: FontWeight.w700,
-                            foreground: Paint()
-                              ..shader = const LinearGradient(
-                                colors: [
-                                  Color(0xFFFF6B35),
-                                  Color(0xFFFFD93D)
-                                ],
-                              ).createShader(
-                                  const Rect.fromLTWH(0, 0, 150, 150)),
-                          ),
-                        )
-                            : Text(
-                          'GO!',
-                          key: const ValueKey('go'),
-                          style: GoogleFonts.fredoka(
-                            fontSize: 90,
-                            fontWeight: FontWeight.w700,
-                            color: const Color(0xFF6BFFD8),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                _CountdownOverlay(countdown: _countdown),
 
               // Game-over listener
               Obx(() {
@@ -335,14 +215,317 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HUD Components
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ScorePanel extends StatelessWidget {
+  final int score;
+  final int best;
+  const _ScorePanel({required this.score, required this.best});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: Colors.black.withOpacity(0.35),
+        border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFFF6B9D).withOpacity(0.12),
+            blurRadius: 16,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$score',
+            style: GoogleFonts.fredoka(
+              fontSize: 40,
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              height: 1.0,
+              shadows: [
+                Shadow(
+                  color: const Color(0xFFFF6B9D).withOpacity(0.6),
+                  blurRadius: 12,
+                ),
+              ],
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.emoji_events_rounded,
+                  color: const Color(0xFFFFD600), size: 10),
+              const SizedBox(width: 3),
+              Text(
+                '$best',
+                style: GoogleFonts.poppins(
+                  fontSize: 10,
+                  color: const Color(0xFFFFD600).withOpacity(0.85),
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SpeedBadge extends StatelessWidget {
+  final double speed;
+  const _SpeedBadge({required this.speed});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ((speed - 5.0) / 9.0).clamp(0.0, 1.0);
+    final color = Color.lerp(
+        const Color(0xFF6BFFD8), const Color(0xFFFF4466), t)!;
+    const bars = 5;
+    final filledBars = (t * bars).ceil().clamp(1, bars);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.black.withOpacity(0.35),
+        border: Border.all(color: color.withOpacity(0.3), width: 1),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'SPD',
+            style: GoogleFonts.poppins(
+              fontSize: 8,
+              color: Colors.white38,
+              letterSpacing: 1.2,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(bars, (i) {
+              final filled = i < filledBars;
+              return Container(
+                width: 4,
+                height: 10 + (i * 2.0),
+                margin: const EdgeInsets.symmetric(horizontal: 1.5),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(2),
+                  color: filled
+                      ? color.withOpacity(0.9)
+                      : Colors.white.withOpacity(0.1),
+                  boxShadow: filled
+                      ? [BoxShadow(color: color.withOpacity(0.5), blurRadius: 4)]
+                      : null,
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PauseButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _PauseButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 44, height: 44,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: Colors.black.withOpacity(0.4),
+          border: Border.all(color: Colors.white.withOpacity(0.12), width: 1),
+        ),
+        child: Icon(Icons.pause_rounded,
+            color: Colors.white.withOpacity(0.85), size: 20),
+      ),
+    );
+  }
+}
+
+class _ShapeHintBadge extends StatelessWidget {
+  final String hint;
+  final Color color;
+  final IconData icon;
+  const _ShapeHintBadge({required this.hint, required this.color, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(50),
+        border: Border.all(color: color.withOpacity(0.55), width: 1.5),
+        boxShadow: [
+          BoxShadow(color: color.withOpacity(0.2), blurRadius: 20, spreadRadius: 2),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 7),
+          Text(
+            hint,
+            style: GoogleFonts.poppins(
+              fontSize: 12,
+              color: color,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.5,
+            ),
+          ),
+        ],
+      ),
+    )
+        .animate(onPlay: (c) => c.repeat(reverse: true))
+        .scaleXY(begin: 0.97, end: 1.03, duration: 700.ms, curve: Curves.easeInOut);
+  }
+}
+
+class _TutorialHint extends StatelessWidget {
+  final AnimationController pulseAnim;
+  const _TutorialHint({required this.pulseAnim});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: pulseAnim,
+      builder: (_, __) => Opacity(
+        opacity: 0.3 + pulseAnim.value * 0.4,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.swipe_rounded, color: Colors.white54, size: 15),
+            const SizedBox(width: 6),
+            Text(
+              'Drag left/right to move  ·  up/down to reshape',
+              style: GoogleFonts.poppins(fontSize: 11, color: Colors.white54),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Countdown Overlay
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CountdownOverlay extends StatelessWidget {
+  final int countdown;
+  const _CountdownOverlay({required this.countdown});
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment.center,
+            radius: 1.2,
+            colors: [
+              Colors.black.withOpacity(0.15),
+              Colors.black.withOpacity(0.55),
+            ],
+          ),
+        ),
+        child: Center(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            transitionBuilder: (child, anim) => ScaleTransition(
+              scale: CurvedAnimation(parent: anim, curve: Curves.elasticOut),
+              child: FadeTransition(opacity: anim, child: child),
+            ),
+            child: countdown > 0
+                ? Column(
+              key: ValueKey(countdown),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$countdown',
+                  style: GoogleFonts.fredoka(
+                    fontSize: 140,
+                    fontWeight: FontWeight.w700,
+                    foreground: Paint()
+                      ..shader = const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFFFFFFFF), Color(0xFFFF6B9D)],
+                      ).createShader(const Rect.fromLTWH(0, 0, 160, 160)),
+                  ),
+                ),
+                Text(
+                  'GET READY',
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    color: Colors.white38,
+                    letterSpacing: 4,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            )
+                : Column(
+              key: const ValueKey('go'),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'GO!',
+                  style: GoogleFonts.fredoka(
+                    fontSize: 100,
+                    fontWeight: FontWeight.w700,
+                    foreground: Paint()
+                      ..shader = const LinearGradient(
+                        colors: [Color(0xFF00FFD1), Color(0xFF6BFFD8)],
+                      ).createShader(const Rect.fromLTWH(0, 0, 180, 100)),
+                  ),
+                ),
+                Text(
+                  'SQUISH & DASH',
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    color: const Color(0xFF6BFFD8).withOpacity(0.6),
+                    letterSpacing: 4,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 3D Perspective Painter
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _JellyRunnerPainter extends CustomPainter {
   final List<ObstacleModel> obstacles;
   final double ballX;
-  final double ballScaleX; // combined player scaleX × squish
-  final double ballScaleY; // combined player scaleY × squish
+  final double ballScaleX;
+  final double ballScaleY;
   final Size screenSize;
 
   _JellyRunnerPainter({
@@ -371,44 +554,9 @@ class _JellyRunnerPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final s = (size.width > 0 && size.height > 0) ? size : screenSize;
 
-    // Sky
-    final skyRect = Rect.fromLTWH(0, 0, s.width, s.height * 0.42);
-    canvas.drawRect(
-      skyRect,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF1A0A2E), Color(0xFF3B1F6B)],
-        ).createShader(skyRect),
-    );
-
-    // Stars
-    final starPaint = Paint()..color = Colors.white.withOpacity(0.5);
-    for (final p in [
-      Offset(s.width * 0.10, s.height * 0.05),
-      Offset(s.width * 0.25, s.height * 0.12),
-      Offset(s.width * 0.50, s.height * 0.07),
-      Offset(s.width * 0.70, s.height * 0.03),
-      Offset(s.width * 0.85, s.height * 0.15),
-      Offset(s.width * 0.40, s.height * 0.18),
-      Offset(s.width * 0.60, s.height * 0.22),
-    ]) {
-      if (p.dy < s.height * 0.42) canvas.drawCircle(p, 1.5, starPaint);
-    }
-
-    // Ground
-    final groundRect = Rect.fromLTWH(0, s.height * 0.42, s.width, s.height * 0.58);
-    canvas.drawRect(
-      groundRect,
-      Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF2C2C3E), Color(0xFF1A1A2E)],
-        ).createShader(groundRect),
-    );
-
+    _drawSky(canvas, s);
+    _drawStars(canvas, s);
+    _drawGround(canvas, s);
     _drawRoad(canvas, s);
     _drawRoadMarkings(canvas, s);
 
@@ -418,6 +566,64 @@ class _JellyRunnerPainter extends CustomPainter {
 
     _drawBallShadow(canvas, s);
     _drawBall(canvas, s);
+  }
+
+  void _drawSky(Canvas canvas, Size s) {
+    final skyRect = Rect.fromLTWH(0, 0, s.width, s.height * 0.42);
+    canvas.drawRect(
+      skyRect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF080514), Color(0xFF150A28), Color(0xFF261048)],
+          stops: [0.0, 0.5, 1.0],
+        ).createShader(skyRect),
+    );
+    // Nebula glow
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(s.width * 0.5, s.height * 0.12),
+        width: s.width * 1.4, height: s.height * 0.35,
+      ),
+      Paint()
+        ..color = const Color(0xFFFF6B9D).withOpacity(0.05)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50),
+    );
+  }
+
+  void _drawStars(Canvas canvas, Size s) {
+    final stars = [
+      [0.08, 0.04, 2.0], [0.22, 0.10, 1.5], [0.48, 0.06, 2.5],
+      [0.65, 0.02, 1.8], [0.82, 0.13, 1.5], [0.38, 0.17, 1.2],
+      [0.58, 0.20, 2.0], [0.15, 0.25, 1.3], [0.75, 0.08, 1.7],
+      [0.92, 0.18, 1.4], [0.30, 0.05, 1.6], [0.55, 0.30, 1.1],
+    ];
+    for (final star in stars) {
+      final x = s.width * star[0];
+      final y = s.height * star[1];
+      if (y >= s.height * 0.42) continue;
+      final r = star[2];
+      canvas.drawCircle(Offset(x, y), r * 3,
+          Paint()
+            ..color = Colors.white.withOpacity(0.05)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
+      canvas.drawCircle(Offset(x, y), r,
+          Paint()..color = Colors.white.withOpacity(0.8));
+    }
+  }
+
+  void _drawGround(Canvas canvas, Size s) {
+    final groundRect = Rect.fromLTWH(0, s.height * 0.42, s.width, s.height * 0.58);
+    canvas.drawRect(
+      groundRect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF1C1828), Color(0xFF0D0A1E)],
+        ).createShader(groundRect),
+    );
   }
 
   void _drawRoad(Canvas canvas, Size s) {
@@ -432,16 +638,28 @@ class _JellyRunnerPainter extends CustomPainter {
           ..moveTo(tl.dx, tl.dy) ..lineTo(tr.dx, tr.dy)
           ..lineTo(br.dx, br.dy) ..lineTo(bl.dx, bl.dy) ..close(),
         Paint()
-          ..color = Color.lerp(const Color(0xFF3A3A5C),
-              const Color(0xFF2A2A42), i / (zLevels.length - 1))!,
+          ..color = Color.lerp(
+              const Color(0xFF2A2640),
+              const Color(0xFF1C1828),
+              i / (zLevels.length - 1))!,
       );
     }
     for (final wx in [-1.0, 1.0]) {
+      // Glow
       canvas.drawLine(
         _project(wx, 0.0, 0.5, s), _project(wx, 0.0, 18.0, s),
         Paint()
-          ..color = const Color(0xFFFF6B9D).withOpacity(0.4)
-          ..strokeWidth = 2.5
+          ..color = const Color(0xFFFF6B9D).withOpacity(0.3)
+          ..strokeWidth = 4.0
+          ..style = PaintingStyle.stroke
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+      );
+      // Sharp line
+      canvas.drawLine(
+        _project(wx, 0.0, 0.5, s), _project(wx, 0.0, 18.0, s),
+        Paint()
+          ..color = const Color(0xFFFF6B9D).withOpacity(0.6)
+          ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke,
       );
     }
@@ -449,8 +667,8 @@ class _JellyRunnerPainter extends CustomPainter {
 
   void _drawRoadMarkings(Canvas canvas, Size s) {
     final paint = Paint()
-      ..color = Colors.white.withOpacity(0.15)
-      ..strokeWidth = 2
+      ..color = Colors.white.withOpacity(0.1)
+      ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
     for (double z = 1.0; z < 18.0; z += 2.5) {
       final a = _project(0.0, 0.0, z,       s);
@@ -464,22 +682,16 @@ class _JellyRunnerPainter extends CustomPainter {
     if (obs.z < 0.2) return;
     const wallH = GameController.wallHeight;
 
-    // Hole border colour encodes the required ball shape
     final Color holeGlow;
     switch (obs.holeType) {
-      case HoleType.tall:
-        holeGlow = const Color(0xFF6BFFD8); // teal = drag up to stretch
-        break;
-      case HoleType.wide:
-        holeGlow = const Color(0xFFFFD86B); // gold = drag down to squish
-        break;
-      default:
-        holeGlow = const Color(0xFFFFE57A); // yellow = any shape ok
+      case HoleType.tall:   holeGlow = const Color(0xFF00FFD1); break;
+      case HoleType.wide:   holeGlow = const Color(0xFFFFD600); break;
+      default:              holeGlow = const Color(0xFFFF9EFF);
     }
 
-    const wallColor      = Color(0xFFE8622A);
-    const wallColorDark  = Color(0xFFC04A18);
-    const wallColorLight = Color(0xFFFF7A3C);
+    const wallColor      = Color(0xFFD85520);
+    const wallColorDark  = Color(0xFFA83A10);
+    const wallColorLight = Color(0xFFFF6B2C);
 
     void quad(Offset a, Offset b, Offset c, Offset d, Color color) {
       if (a.dx < -5000 || b.dx < -5000) return;
@@ -488,7 +700,7 @@ class _JellyRunnerPainter extends CustomPainter {
         ..lineTo(c.dx, c.dy) ..lineTo(d.dx, d.dy) ..close();
       canvas.drawPath(path, Paint()..color = color);
       canvas.drawPath(path, Paint()
-        ..color = Colors.black.withOpacity(0.3)
+        ..color = Colors.black.withOpacity(0.2)
         ..style = PaintingStyle.stroke ..strokeWidth = 1.0);
     }
 
@@ -516,30 +728,38 @@ class _JellyRunnerPainter extends CustomPainter {
       quad(p(obs.holeLeft, obs.holeBottom), p(obs.holeRight, obs.holeBottom), p(obs.holeRight, 0), p(obs.holeLeft, 0), wallColorDark);
     }
 
-    // Brick lines
+    // Brick texture
     final brickPaint = Paint()
-      ..color = Colors.black.withOpacity(0.18)
-      ..strokeWidth = 1.2 ..style = PaintingStyle.stroke;
+      ..color = Colors.black.withOpacity(0.15)
+      ..strokeWidth = 1.0 ..style = PaintingStyle.stroke;
     for (double by = 0.18; by < wallH; by += 0.18) {
-      final la = p(wl, by); if (la.dy < s.height * 0.1) break;
+      final la = p(wl, by);
+      if (la.dy < s.height * 0.1) break;
       canvas.drawLine(la, p(wr, by), brickPaint);
     }
     for (double bx = wl + 0.25; bx < wr; bx += 0.25) {
       canvas.drawLine(p(bx, 0), p(bx, wallH), brickPaint);
     }
 
-    // Coloured hole glow
-    canvas.drawPath(
-      Path()
-        ..moveTo(p(obs.holeLeft, obs.holeBottom).dx, p(obs.holeLeft, obs.holeBottom).dy)
-        ..lineTo(p(obs.holeRight, obs.holeBottom).dx, p(obs.holeRight, obs.holeBottom).dy)
-        ..lineTo(p(obs.holeRight, obs.holeTop).dx, p(obs.holeRight, obs.holeTop).dy)
-        ..lineTo(p(obs.holeLeft, obs.holeTop).dx, p(obs.holeLeft, obs.holeTop).dy)
-        ..close(),
-      Paint()
-        ..color = holeGlow.withOpacity(0.75)
-        ..style = PaintingStyle.stroke ..strokeWidth = 3.0,
-    );
+    // Hole glow
+    final holePath = Path()
+      ..moveTo(p(obs.holeLeft, obs.holeBottom).dx, p(obs.holeLeft, obs.holeBottom).dy)
+      ..lineTo(p(obs.holeRight, obs.holeBottom).dx, p(obs.holeRight, obs.holeBottom).dy)
+      ..lineTo(p(obs.holeRight, obs.holeTop).dx, p(obs.holeRight, obs.holeTop).dy)
+      ..lineTo(p(obs.holeLeft, obs.holeTop).dx, p(obs.holeLeft, obs.holeTop).dy)
+      ..close();
+    canvas.drawPath(holePath, Paint()
+      ..color = holeGlow.withOpacity(0.12)
+      ..style = PaintingStyle.fill);
+    canvas.drawPath(holePath, Paint()
+      ..color = holeGlow.withOpacity(0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.5
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
+    canvas.drawPath(holePath, Paint()
+      ..color = holeGlow
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5);
   }
 
   void _drawBallShadow(Canvas canvas, Size s) {
@@ -547,26 +767,32 @@ class _JellyRunnerPainter extends CustomPainter {
     canvas.drawOval(
       Rect.fromCenter(
           center: Offset(center.dx, center.dy - 4),
-          width: 45 * ballScaleX, height: 10),
+          width: 44 * ballScaleX, height: 9),
       Paint()
-        ..color = Colors.black.withOpacity(0.35)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+        ..color = Colors.black.withOpacity(0.4)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
     );
   }
 
   void _drawBall(Canvas canvas, Size s) {
-    // Centre Y rises when ball stretches tall
     final center = _project(ballX, 0.24 * ballScaleY, _roadZ, s);
     const double radius = 22.0;
     final double rx = radius * ballScaleX;
     final double ry = radius * ballScaleY;
 
-    // Glow
+    // Outer glow
     canvas.drawOval(
-      Rect.fromCenter(center: center, width: (rx + 14) * 2, height: (ry + 14) * 2),
+      Rect.fromCenter(center: center, width: (rx + 18) * 2, height: (ry + 18) * 2),
       Paint()
-        ..color = const Color(0xFFFF6B9D).withOpacity(0.22)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14),
+        ..color = const Color(0xFFFF6B9D).withOpacity(0.18)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18),
+    );
+    // Inner glow
+    canvas.drawOval(
+      Rect.fromCenter(center: center, width: (rx + 6) * 2, height: (ry + 6) * 2),
+      Paint()
+        ..color = const Color(0xFFFF6B9D).withOpacity(0.12)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
     );
 
     // Body
@@ -575,21 +801,32 @@ class _JellyRunnerPainter extends CustomPainter {
       ballRect,
       Paint()
         ..shader = RadialGradient(
-          center: const Alignment(-0.35, -0.4),
-          colors: const [Color(0xFFFFD1E8), Color(0xFFFF6B9D), Color(0xFFD63B7A)],
-          stops: const [0.0, 0.55, 1.0],
+          center: const Alignment(-0.3, -0.35),
+          colors: const [
+            Color(0xFFFFE0EE),
+            Color(0xFFFF6B9D),
+            Color(0xFFCC3370),
+          ],
+          stops: const [0.0, 0.5, 1.0],
         ).createShader(ballRect),
     );
 
-    // Highlight
+    // Main highlight
     canvas.drawOval(
       Rect.fromCenter(
-          center: Offset(center.dx - rx * 0.28, center.dy - ry * 0.3),
-          width: rx * 0.55, height: ry * 0.32),
-      Paint()..color = Colors.white.withOpacity(0.55),
+          center: Offset(center.dx - rx * 0.25, center.dy - ry * 0.3),
+          width: rx * 0.5, height: ry * 0.28),
+      Paint()..color = Colors.white.withOpacity(0.6),
+    );
+    // Small secondary highlight
+    canvas.drawOval(
+      Rect.fromCenter(
+          center: Offset(center.dx + rx * 0.2, center.dy - ry * 0.46),
+          width: rx * 0.14, height: ry * 0.09),
+      Paint()..color = Colors.white.withOpacity(0.3),
     );
 
-    // Face (size tracks ball height)
+    // Face
     final faceSize = (14.0 + (ry - 22.0) * 0.4).clamp(10.0, 26.0);
     final tp = TextPainter(
       text: TextSpan(text: '😊', style: TextStyle(fontSize: faceSize)),
@@ -615,61 +852,101 @@ class _PauseDialog extends StatelessWidget {
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(28),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(28),
           gradient: const LinearGradient(
-            begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [Color(0xFF1A0533), Color(0xFF0D1B4B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1A0A35), Color(0xFF0D1540)],
           ),
-          border: Border.all(color: Colors.white.withOpacity(0.15), width: 1.5),
+          border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFFF6B9D).withOpacity(0.15),
+              blurRadius: 40,
+            ),
+          ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('⏸', style: TextStyle(fontSize: 40)),
-            const SizedBox(height: 12),
-            Text('Paused',
-                style: GoogleFonts.fredoka(
-                    fontSize: 32, color: Colors.white, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 28),
-            _btn('Resume', Icons.play_arrow_rounded, const Color(0xFF6BFFD8), () {
-              Navigator.pop(context); gc.resumeGame();
-            }),
+            Container(
+              width: 56, height: 56,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.06),
+                border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5),
+              ),
+              child: const Center(child: Text('⏸', style: TextStyle(fontSize: 24))),
+            ),
             const SizedBox(height: 14),
-            _btn('Menu', Icons.home_rounded, const Color(0xFFFF6B9D), () {
-              gc.pauseGame(); // stop loop before navigating away
-              Navigator.of(context)..pop()..pop();
-            }),
+            Text(
+              'PAUSED',
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                color: Colors.white38,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 3,
+              ),
+            ),
+            const SizedBox(height: 24),
+            _PauseBtn(
+              label: 'Resume',
+              icon: Icons.play_arrow_rounded,
+              color: const Color(0xFF00FFD1),
+              onTap: () { Navigator.pop(context); gc.resumeGame(); },
+            ),
+            const SizedBox(height: 12),
+            _PauseBtn(
+              label: 'Main Menu',
+              icon: Icons.home_rounded,
+              color: const Color(0xFFFF6B9D),
+              onTap: () { gc.pauseGame(); Navigator.of(context)..pop()..pop(); },
+            ),
           ],
         ),
       ),
     ).animate().scale(
         duration: 400.ms, curve: Curves.elasticOut,
-        begin: const Offset(0.7, 0.7));
+        begin: const Offset(0.75, 0.75));
   }
+}
 
-  Widget _btn(String label, IconData icon, Color color, VoidCallback onTap) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          height: 52,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: color.withOpacity(0.5), width: 1.5),
-            color: color.withOpacity(0.12),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: color, size: 20),
-              const SizedBox(width: 8),
-              Text(label,
-                  style: GoogleFonts.poppins(
-                      fontSize: 16, fontWeight: FontWeight.w600,
-                      color: Colors.white)),
-            ],
-          ),
+class _PauseBtn extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  const _PauseBtn({required this.label, required this.icon,
+    required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 52,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: color.withOpacity(0.1),
+          border: Border.all(color: color.withOpacity(0.4), width: 1.5),
+          boxShadow: [
+            BoxShadow(color: color.withOpacity(0.1), blurRadius: 16),
+          ],
         ),
-      );
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 20),
+            const SizedBox(width: 9),
+            Text(label,
+                style: GoogleFonts.poppins(
+                    fontSize: 15, fontWeight: FontWeight.w600,
+                    color: Colors.white)),
+          ],
+        ),
+      ),
+    );
+  }
 }
